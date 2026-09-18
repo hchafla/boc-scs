@@ -6,6 +6,7 @@
     "date": "2026-09-16",
     "source": "BOC",
     "organismo": "Servicio Canario de la Salud",
-    "cve": "BOC-A-2026-186-3263"
+    "cve": "BOC-A-2026-186-3263",
+    "telegram_notified": true
   }
 ]

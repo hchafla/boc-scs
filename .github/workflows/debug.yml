@@ -1,0 +1,41 @@
+name: Debug RSS BOC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Instalar dependencias
+        run: |
+          pip install feedparser
+
+      - name: Analizar RSS
+        run: |
+          python - <<'PY'
+          import feedparser
+
+          RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
+
+          feed = feedparser.parse(RSS_URL)
+
+          print(f"Entradas encontradas: {len(feed.entries)}")
+          print("=" * 100)
+
+          for i, entry in enumerate(feed.entries[:10], 1):
+              print(f"\nENTRADA {i}")
+              print("-" * 100)
+
+              for key, value in entry.items():
+                  print(f"{key}: {value}")
+          PY

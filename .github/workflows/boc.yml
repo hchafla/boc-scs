@@ -174,13 +174,16 @@ jobs:
                   else ""
               )
 
+              # URL directa al PDF oficial del BOC
+              pdf_url = (
+                  f"https://sede.gobiernodecanarias.org/boc/"
+                  f"{cve.lower()}.pdf"
+              )
+
               noticia = {
                   "id": entry_id,
                   "title": title,
-                  "url": entry.get(
-                      "link",
-                      ""
-                  ),
+                  "url": pdf_url,
                   "date": date,
                   "source": "BOC",
                   "organismo": "Servicio Canario de la Salud",
@@ -203,6 +206,9 @@ jobs:
               )
               print(
                   f"Título: {title}"
+              )
+              print(
+                  f"PDF: {pdf_url}"
               )
               print("-" * 80)
 

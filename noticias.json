@@ -10,13 +10,3 @@
     "telegram_notified": true
   }
 ]
-{
-  "id": "TEST-TELEGRAM-002",
-  "title": "Prueba de Telegram en topic de anuncios",
-  "url": "https://www.gobiernodecanarias.org/boc/",
-  "date": "2026-09-18",
-  "source": "BOC",
-  "organismo": "Servicio Canario de la Salud",
-  "cve": "TEST-TELEGRAM-002",
-  "telegram_notified": false
-}

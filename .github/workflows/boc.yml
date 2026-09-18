@@ -25,56 +25,49 @@ jobs:
         run: |
           pip install feedparser beautifulsoup4
 
-      - name: Procesar RSS y enviar Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Actualizar noticias
         run: |
           python - <<'PY'
           import feedparser
           import json
           import re
-          import os
-          import html
           from bs4 import BeautifulSoup
           from datetime import datetime
-          from urllib.request import Request, urlopen
-          from urllib.parse import urlencode
 
           RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
           OUTPUT = "noticias.json"
 
-          TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-          TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
           # --------------------------------------------------
-          # COMPROBAR CONFIGURACIÓN DE TELEGRAM
-          # --------------------------------------------------
-
-          if not TELEGRAM_BOT_TOKEN:
-              print("ERROR: Falta el secret TELEGRAM_BOT_TOKEN")
-              raise SystemExit(1)
-
-          if not TELEGRAM_CHAT_ID:
-              print("ERROR: Falta el secret TELEGRAM_CHAT_ID")
-              raise SystemExit(1)
-
-          # --------------------------------------------------
-          # CARGAR NOTICIAS EXISTENTES
+          # CARGAR JSON EXISTENTE
           # --------------------------------------------------
 
           try:
               with open(OUTPUT, "r", encoding="utf-8") as f:
-                  noticias_existentes = json.load(f)
+                  noticias = json.load(f)
 
-          except (FileNotFoundError, json.JSONDecodeError):
-              noticias_existentes = []
+              if not isinstance(noticias, list):
+                  print("ERROR: noticias.json no contiene una lista.")
+                  raise SystemExit(1)
 
-          existentes = {
-              noticia["id"]: noticia
-              for noticia in noticias_existentes
+          except FileNotFoundError:
+              print("No existe noticias.json. Se creará uno nuevo.")
+              noticias = []
+
+          except json.JSONDecodeError:
+              print("ERROR: noticias.json no contiene JSON válido.")
+              raise SystemExit(1)
+
+          # IDs que ya tenemos almacenados
+          ids_existentes = {
+              noticia.get("id")
+              for noticia in noticias
               if noticia.get("id")
           }
+
+          print(
+              f"Noticias existentes antes de procesar RSS: "
+              f"{len(noticias)}"
+          )
 
           # --------------------------------------------------
           # LEER RSS
@@ -84,41 +77,56 @@ jobs:
 
           feed = feedparser.parse(RSS_URL)
 
-          print(f"Entradas RSS encontradas: {len(feed.entries)}")
-          print("=" * 80)
+          print(
+              f"Entradas encontradas en RSS: "
+              f"{len(feed.entries)}"
+          )
 
           nuevas = 0
-          noticias_scs = 0
-          telegram_enviadas = 0
-          telegram_errores = 0
+          scs_encontradas = 0
 
           # --------------------------------------------------
-          # PROCESAR ENTRADAS
+          # PROCESAR RSS
           # --------------------------------------------------
 
           for entry in feed.entries:
 
-              title_original = entry.get("title", "").strip()
+              title_original = entry.get(
+                  "title",
+                  ""
+              ).strip()
 
-              # Solo noticias del Servicio Canario de la Salud
+              # Solo Servicio Canario de la Salud
               if not title_original.startswith(
                   "Servicio Canario de la Salud.-"
               ):
                   continue
 
-              noticias_scs += 1
+              scs_encontradas += 1
 
-              entry_id = entry.get("id", "").strip()
+              # --------------------------------------------------
+              # ID
+              # --------------------------------------------------
+
+              entry_id = entry.get(
+                  "id",
+                  ""
+              ).strip()
 
               if not entry_id:
-                  print("Entrada SCS sin ID. Se ignora.")
+                  print(
+                      "Entrada SCS sin ID. Se ignora."
+                  )
                   continue
 
-              # --------------------------------------------------
-              # COMPROBAR SI YA EXISTÍA
-              # --------------------------------------------------
+              # Si ya existe, no hacemos absolutamente nada
+              if entry_id in ids_existentes:
 
-              ya_existia = entry_id in existentes
+                  print(
+                      f"Ya existe: {entry_id}"
+                  )
+
+                  continue
 
               # --------------------------------------------------
               # TÍTULO
@@ -134,7 +142,10 @@ jobs:
               # FECHA
               # --------------------------------------------------
 
-              published = entry.get("published", "").strip()
+              published = entry.get(
+                  "published",
+                  ""
+              ).strip()
 
               date = ""
 
@@ -147,19 +158,25 @@ jobs:
                           "%a, %d %b %Y %H:%M:%S %z"
                       )
 
-                      date = dt.strftime("%Y-%m-%d")
+                      date = dt.strftime(
+                          "%Y-%m-%d"
+                      )
 
                   except Exception as e:
 
                       print(
-                          f"ERROR procesando fecha: {e}"
+                          f"Error procesando fecha "
+                          f"de {entry_id}: {e}"
                       )
 
               # --------------------------------------------------
-              # RESUMEN / CVE
+              # CVE
               # --------------------------------------------------
 
-              summary_html = entry.get("summary", "")
+              summary_html = entry.get(
+                  "summary",
+                  ""
+              )
 
               soup = BeautifulSoup(
                   summary_html,
@@ -176,180 +193,60 @@ jobs:
                   text
               )
 
-              cve = match.group(1) if match else ""
+              cve = (
+                  match.group(1)
+                  if match
+                  else ""
+              )
 
               # --------------------------------------------------
-              # CREAR / ACTUALIZAR NOTICIA
+              # CREAR NOTICIA
               # --------------------------------------------------
 
               noticia = {
                   "id": entry_id,
                   "title": title,
-                  "url": entry.get("link", ""),
+                  "url": entry.get(
+                      "link",
+                      ""
+                  ),
                   "date": date,
                   "source": "BOC",
                   "organismo": "Servicio Canario de la Salud",
                   "cve": cve
               }
 
-              if not ya_existia:
+              # --------------------------------------------------
+              # AÑADIR AL HISTÓRICO
+              # --------------------------------------------------
 
-                  # Nueva noticia
-                  noticia["telegram_notified"] = False
+              noticias.append(noticia)
 
-                  existentes[entry_id] = noticia
+              ids_existentes.add(entry_id)
 
-                  nuevas += 1
-
-                  print()
-                  print("NUEVA NOTICIA:")
-                  print(title)
-                  print(f"Fecha: {date}")
-                  print(f"CVE: {cve}")
-                  print(f"URL: {noticia['url']}")
-
-              else:
-
-                  # Actualizar datos existentes
-                  existentes[entry_id].update(noticia)
-
-                  # Si es una noticia antigua que todavía no tiene
-                  # el campo telegram_notified, NO la enviamos.
-                  if "telegram_notified" not in existentes[entry_id]:
-
-                      existentes[entry_id]["telegram_notified"] = True
-
-          # --------------------------------------------------
-          # FUNCIÓN PARA ENVIAR TELEGRAM
-          # --------------------------------------------------
-
-          def enviar_telegram(noticia):
-
-              titulo = html.escape(
-                  noticia.get("title", "")
-              )
-
-              fecha = html.escape(
-                  noticia.get("date", "")
-              )
-
-              cve = html.escape(
-                  noticia.get("cve", "")
-              )
-
-              url = noticia.get("url", "")
-
-              mensaje = (
-                  "<b>📰 Nueva publicación del BOC</b>\n\n"
-                  f"<b>{titulo}</b>\n\n"
-                  f"📅 {fecha}\n"
-              )
-
-              if cve:
-                  mensaje += f"🔎 CVE: {cve}\n"
-
-              mensaje += (
-                  f"\n🔗 <a href=\"{html.escape(url, quote=True)}\">"
-                  "Ver publicación en el BOC"
-                  "</a>"
-              )
-
-              telegram_url = (
-                  f"https://api.telegram.org/bot"
-                  f"{TELEGRAM_BOT_TOKEN}/sendMessage"
-              )
-
-              data = urlencode({
-                  "chat_id": TELEGRAM_CHAT_ID,
-                  "text": mensaje,
-                  "parse_mode": "HTML",
-                  "disable_web_page_preview": "false"
-              }).encode("utf-8")
-
-              request = Request(
-                  telegram_url,
-                  data=data,
-                  method="POST"
-              )
-
-              try:
-
-                  with urlopen(request, timeout=30) as response:
-
-                      respuesta = json.loads(
-                          response.read().decode("utf-8")
-                      )
-
-                  if respuesta.get("ok"):
-
-                      return True
-
-                  print(
-                      "Telegram respondió con error:"
-                  )
-                  print(respuesta)
-
-                  return False
-
-              except Exception as e:
-
-                  print(
-                      f"Error enviando a Telegram: {e}"
-                  )
-
-                  return False
-
-          # --------------------------------------------------
-          # ENVIAR NUEVAS NOTICIAS
-          # --------------------------------------------------
-
-          print()
-          print("=" * 80)
-          print("TELEGRAM")
-          print("=" * 80)
-
-          for entry_id, noticia in existentes.items():
-
-              # Solo enviamos las que aún no han sido notificadas
-              if noticia.get("telegram_notified") is not False:
-                  continue
+              nuevas += 1
 
               print()
+              print("NUEVA NOTICIA AÑADIDA")
               print(
-                  f"Enviando a Telegram: "
-                  f"{noticia['title']}"
+                  f"ID: {entry_id}"
               )
-
-              enviado = enviar_telegram(noticia)
-
-              if enviado:
-
-                  noticia["telegram_notified"] = True
-
-                  telegram_enviadas += 1
-
-                  print(
-                      "✓ Telegram enviado correctamente"
-                  )
-
-              else:
-
-                  telegram_errores += 1
-
-                  print(
-                      "✗ No se pudo enviar a Telegram"
-                  )
+              print(
+                  f"Fecha: {date}"
+              )
+              print(
+                  f"Título: {title}"
+              )
+              print("-" * 80)
 
           # --------------------------------------------------
-          # ORDENAR NOTICIAS
+          # ORDENAR
           # --------------------------------------------------
-
-          noticias = list(existentes.values())
 
           noticias.sort(
-              key=lambda x: (
-                  x.get("date", ""),
-                  x.get("id", "")
+              key=lambda noticia: (
+                  noticia.get("date", ""),
+                  noticia.get("id", "")
               ),
               reverse=True
           )
@@ -385,46 +282,21 @@ jobs:
           )
 
           print(
-              f"Noticias SCS encontradas: {noticias_scs}"
+              f"Noticias SCS encontradas: "
+              f"{scs_encontradas}"
           )
 
           print(
-              f"Nuevas noticias: {nuevas}"
+              f"Nuevas noticias añadidas: "
+              f"{nuevas}"
           )
 
           print(
-              f"Noticias enviadas a Telegram: "
-              f"{telegram_enviadas}"
+              f"Total histórico: "
+              f"{len(noticias)}"
           )
-
-          print(
-              f"Errores Telegram: "
-              f"{telegram_errores}"
-          )
-
-          print(
-              f"Total histórico: {len(noticias)}"
-          )
-
-          print()
-          print("Últimas noticias:")
-
-          for noticia in noticias[:10]:
-
-              print(
-                  f"{noticia.get('date', '')} | "
-                  f"{noticia.get('cve', '')} | "
-                  f"{noticia.get('title', '')}"
-              )
 
           print("=" * 80)
-
-          # Si Telegram ha fallado, hacemos fallar el workflow.
-          # Así queda claro que la notificación no se ha completado.
-          if telegram_errores > 0:
-              raise SystemExit(
-                  "Se produjeron errores enviando noticias a Telegram."
-              )
 
           PY
 

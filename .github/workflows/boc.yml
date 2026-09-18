@@ -26,16 +26,31 @@ jobs:
           pip install feedparser beautifulsoup4
 
       - name: Actualizar noticias
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
         run: |
           python - <<'PY'
           import feedparser
           import json
           import re
+          import os
+          import urllib.request
+          import urllib.parse
           from bs4 import BeautifulSoup
           from datetime import datetime
 
           RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
           OUTPUT = "noticias.json"
+
+          TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+          TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+          TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
+
+          # ============================================================
+          # 1. CARGAR EL JSON EXISTENTE
+          # ============================================================
 
           try:
               with open(OUTPUT, "r", encoding="utf-8") as f:
@@ -70,6 +85,10 @@ jobs:
               f"{len(noticias)}"
           )
 
+          # ============================================================
+          # 2. LEER RSS
+          # ============================================================
+
           print("Leyendo RSS del BOC...")
 
           feed = feedparser.parse(RSS_URL)
@@ -81,6 +100,11 @@ jobs:
 
           nuevas = 0
           scs_encontradas = 0
+          noticias_nuevas = []
+
+          # ============================================================
+          # 3. PROCESAR RSS
+          # ============================================================
 
           for entry in feed.entries:
 
@@ -121,6 +145,10 @@ jobs:
                   title_original
               )
 
+              # ========================================================
+              # FECHA
+              # ========================================================
+
               published = entry.get(
                   "published",
                   ""
@@ -148,6 +176,10 @@ jobs:
                           f"de {entry_id}: {e}"
                       )
 
+              # ========================================================
+              # CVE
+              # ========================================================
+
               summary_html = entry.get(
                   "summary",
                   ""
@@ -174,7 +206,10 @@ jobs:
                   else ""
               )
 
-              # URL directa al PDF oficial del BOC
+              # ========================================================
+              # URL DIRECTA AL PDF
+              # ========================================================
+
               pdf_url = (
                   f"https://sede.gobiernodecanarias.org/boc/"
                   f"{cve.lower()}.pdf"
@@ -194,6 +229,8 @@ jobs:
 
               ids_existentes.add(entry_id)
 
+              noticias_nuevas.append(noticia)
+
               nuevas += 1
 
               print()
@@ -211,6 +248,10 @@ jobs:
                   f"PDF: {pdf_url}"
               )
               print("-" * 80)
+
+          # ============================================================
+          # 4. ORDENAR Y GUARDAR JSON
+          # ============================================================
 
           noticias.sort(
               key=lambda noticia: (
@@ -233,6 +274,83 @@ jobs:
                   indent=2
               )
 
+          # ============================================================
+          # 5. TELEGRAM
+          # ============================================================
+
+          for noticia in noticias_nuevas:
+
+              mensaje = (
+                  "📢 <b>Nueva publicación del BOC</b>\n\n"
+                  f"<b>{noticia['title']}</b>\n\n"
+                  f"📅 {noticia['date']}\n"
+                  f"📄 {noticia['cve']}\n\n"
+                  f"🔗 <a href=\"{noticia['url']}\">Ver documento oficial</a>"
+              )
+
+              if not TELEGRAM_BOT_TOKEN:
+                  print(
+                      "ERROR: TELEGRAM_BOT_TOKEN no está configurado."
+                  )
+                  continue
+
+              if not TELEGRAM_CHAT_ID:
+                  print(
+                      "ERROR: TELEGRAM_CHAT_ID no está configurado."
+                  )
+                  continue
+
+              if not TELEGRAM_THREAD_ID:
+                  print(
+                      "ERROR: TELEGRAM_THREAD_ID no está configurado."
+                  )
+                  continue
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot"
+                  f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+              )
+
+              data = urllib.parse.urlencode({
+                  "chat_id": TELEGRAM_CHAT_ID,
+                  "message_thread_id": TELEGRAM_THREAD_ID,
+                  "text": mensaje,
+                  "parse_mode": "HTML",
+                  "disable_web_page_preview": "false"
+              }).encode("utf-8")
+
+              try:
+
+                  request = urllib.request.Request(
+                      telegram_url,
+                      data=data,
+                      method="POST"
+                  )
+
+                  with urllib.request.urlopen(
+                      request,
+                      timeout=30
+                  ) as response:
+
+                      respuesta = response.read().decode(
+                          "utf-8"
+                      )
+
+                  print()
+                  print("TELEGRAM: mensaje enviado")
+                  print(respuesta)
+
+              except Exception as e:
+
+                  print()
+                  print(
+                      f"ERROR enviando a Telegram: {e}"
+                  )
+
+          # ============================================================
+          # 6. RESUMEN
+          # ============================================================
+
           print()
           print("=" * 80)
           print("RESUMEN")
@@ -250,6 +368,11 @@ jobs:
           print(
               f"Nuevas noticias añadidas: "
               f"{nuevas}"
+          )
+
+          print(
+              f"Notificaciones Telegram: "
+              f"{len(noticias_nuevas)}"
           )
 
           print(

@@ -281,12 +281,14 @@ jobs:
           for noticia in noticias_nuevas:
 
               mensaje = (
-    "📢 <b>Nueva publicación del BOC</b>\n\n"
-    f"<b>{noticia['title']}</b>\n\n"
-    f"📅 {noticia['date']}\n"
-    f"📄 {noticia['cve']}\n\n"
-    f"🔗 <a href=\"{noticia['url']}\">Ver documento oficial</a>"
-)
+                  "📢 <b>Nueva publicación del BOC</b>\n\n"
+                  f"<b>{noticia['title']}</b>\n\n"
+                  f"📅 {noticia['date']}\n"
+                  f"📄 {noticia['cve']}\n\n"
+                  f"🔗 <a href=\"{noticia['url']}\">"
+                  f"Ver documento oficial"
+                  f"</a>"
+              )
 
               if not TELEGRAM_BOT_TOKEN:
                   print(

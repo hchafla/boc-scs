@@ -3,7 +3,8 @@ name: Actualizar noticias BOC SCS
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 9 * * 1-5"
+    - cron: "0 15 * * 1-5"
 
 permissions:
   contents: write
@@ -280,10 +281,17 @@ jobs:
 
           for noticia in noticias_nuevas:
 
+              fecha_formateada = datetime.strptime(
+                  noticia["date"],
+                  "%Y-%m-%d"
+              ).strftime(
+                  "%d-%m-%Y"
+              )
+
               mensaje = (
                   "📢 <b>Nueva publicación del BOC</b>\n\n"
                   f"<b>{noticia['title']}</b>\n\n"
-                  f"📅 {noticia['date']}\n"
+                  f"📅 {fecha_formateada}\n"
                   f"📄 <code>{noticia['cve']}</code>\n\n"
                   f"🔗 <a href=\"{noticia['url']}\">"
                   f"Ver documento oficial"

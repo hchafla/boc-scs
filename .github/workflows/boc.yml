@@ -37,17 +37,19 @@ jobs:
           RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
           OUTPUT = "noticias.json"
 
-          # --------------------------------------------------
-          # CARGAR JSON EXISTENTE
-          # --------------------------------------------------
-
           try:
               with open(OUTPUT, "r", encoding="utf-8") as f:
-                  noticias = json.load(f)
+                  contenido = f.read().strip()
 
-              if not isinstance(noticias, list):
-                  print("ERROR: noticias.json no contiene una lista.")
-                  raise SystemExit(1)
+              if not contenido:
+                  print("noticias.json está vacío. Se empezará desde cero.")
+                  noticias = []
+              else:
+                  noticias = json.loads(contenido)
+
+                  if not isinstance(noticias, list):
+                      print("ERROR: noticias.json no contiene una lista.")
+                      raise SystemExit(1)
 
           except FileNotFoundError:
               print("No existe noticias.json. Se creará uno nuevo.")
@@ -57,7 +59,6 @@ jobs:
               print("ERROR: noticias.json no contiene JSON válido.")
               raise SystemExit(1)
 
-          # IDs que ya tenemos almacenados
           ids_existentes = {
               noticia.get("id")
               for noticia in noticias
@@ -68,10 +69,6 @@ jobs:
               f"Noticias existentes antes de procesar RSS: "
               f"{len(noticias)}"
           )
-
-          # --------------------------------------------------
-          # LEER RSS
-          # --------------------------------------------------
 
           print("Leyendo RSS del BOC...")
 
@@ -85,10 +82,6 @@ jobs:
           nuevas = 0
           scs_encontradas = 0
 
-          # --------------------------------------------------
-          # PROCESAR RSS
-          # --------------------------------------------------
-
           for entry in feed.entries:
 
               title_original = entry.get(
@@ -96,17 +89,12 @@ jobs:
                   ""
               ).strip()
 
-              # Solo Servicio Canario de la Salud
               if not title_original.startswith(
                   "Servicio Canario de la Salud.-"
               ):
                   continue
 
               scs_encontradas += 1
-
-              # --------------------------------------------------
-              # ID
-              # --------------------------------------------------
 
               entry_id = entry.get(
                   "id",
@@ -119,7 +107,6 @@ jobs:
                   )
                   continue
 
-              # Si ya existe, no hacemos absolutamente nada
               if entry_id in ids_existentes:
 
                   print(
@@ -128,19 +115,11 @@ jobs:
 
                   continue
 
-              # --------------------------------------------------
-              # TÍTULO
-              # --------------------------------------------------
-
               title = re.sub(
                   r"^Servicio Canario de la Salud\.-\s*",
                   "",
                   title_original
               )
-
-              # --------------------------------------------------
-              # FECHA
-              # --------------------------------------------------
 
               published = entry.get(
                   "published",
@@ -169,10 +148,6 @@ jobs:
                           f"de {entry_id}: {e}"
                       )
 
-              # --------------------------------------------------
-              # CVE
-              # --------------------------------------------------
-
               summary_html = entry.get(
                   "summary",
                   ""
@@ -199,10 +174,6 @@ jobs:
                   else ""
               )
 
-              # --------------------------------------------------
-              # CREAR NOTICIA
-              # --------------------------------------------------
-
               noticia = {
                   "id": entry_id,
                   "title": title,
@@ -215,10 +186,6 @@ jobs:
                   "organismo": "Servicio Canario de la Salud",
                   "cve": cve
               }
-
-              # --------------------------------------------------
-              # AÑADIR AL HISTÓRICO
-              # --------------------------------------------------
 
               noticias.append(noticia)
 
@@ -239,10 +206,6 @@ jobs:
               )
               print("-" * 80)
 
-          # --------------------------------------------------
-          # ORDENAR
-          # --------------------------------------------------
-
           noticias.sort(
               key=lambda noticia: (
                   noticia.get("date", ""),
@@ -250,10 +213,6 @@ jobs:
               ),
               reverse=True
           )
-
-          # --------------------------------------------------
-          # GUARDAR JSON
-          # --------------------------------------------------
 
           with open(
               OUTPUT,
@@ -267,10 +226,6 @@ jobs:
                   ensure_ascii=False,
                   indent=2
               )
-
-          # --------------------------------------------------
-          # RESUMEN
-          # --------------------------------------------------
 
           print()
           print("=" * 80)

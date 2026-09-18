@@ -284,7 +284,7 @@ jobs:
                   "📢 <b>Nueva publicación del BOC</b>\n\n"
                   f"<b>{noticia['title']}</b>\n\n"
                   f"📅 {noticia['date']}\n"
-                  f"📄 {noticia['cve']}\n\n"
+                  f"📄 <code>{noticia['cve']}</code>\n\n"
                   f"🔗 <a href=\"{noticia['url']}\">"
                   f"Ver documento oficial"
                   f"</a>"

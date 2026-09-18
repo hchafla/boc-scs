@@ -25,25 +25,58 @@ jobs:
         run: |
           pip install feedparser beautifulsoup4
 
-      - name: Procesar RSS
+      - name: Procesar RSS y enviar Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
         run: |
           python - <<'PY'
           import feedparser
           import json
           import re
+          import os
+          import html
           from bs4 import BeautifulSoup
           from datetime import datetime
+          from urllib.request import Request, urlopen
+          from urllib.parse import urlencode
 
           RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
           OUTPUT = "noticias.json"
 
+          TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+          TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+          TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
+
           # --------------------------------------------------
-          # Cargar noticias existentes
+          # COMPROBAR CONFIGURACIÓN DE TELEGRAM
+          # --------------------------------------------------
+
+          if not TELEGRAM_BOT_TOKEN:
+              print("ERROR: Falta TELEGRAM_BOT_TOKEN")
+              raise SystemExit(1)
+
+          if not TELEGRAM_CHAT_ID:
+              print("ERROR: Falta TELEGRAM_CHAT_ID")
+              raise SystemExit(1)
+
+          if not TELEGRAM_THREAD_ID:
+              print("ERROR: Falta TELEGRAM_THREAD_ID")
+              raise SystemExit(1)
+
+          print("Configuración de Telegram encontrada.")
+          print(f"Chat ID: {TELEGRAM_CHAT_ID}")
+          print(f"Thread ID: {TELEGRAM_THREAD_ID}")
+
+          # --------------------------------------------------
+          # CARGAR NOTICIAS EXISTENTES
           # --------------------------------------------------
 
           try:
               with open(OUTPUT, "r", encoding="utf-8") as f:
                   noticias_existentes = json.load(f)
+
           except (FileNotFoundError, json.JSONDecodeError):
               noticias_existentes = []
 
@@ -54,23 +87,29 @@ jobs:
           }
 
           # --------------------------------------------------
-          # Descargar RSS
+          # LEER RSS
           # --------------------------------------------------
+
+          print("Leyendo RSS del BOC...")
 
           feed = feedparser.parse(RSS_URL)
 
+          print(f"Entradas RSS encontradas: {len(feed.entries)}")
+          print("=" * 80)
+
           nuevas = 0
           noticias_scs = 0
+          telegram_enviadas = 0
+          telegram_errores = 0
 
           # --------------------------------------------------
-          # Procesar entradas
+          # PROCESAR ENTRADAS
           # --------------------------------------------------
 
           for entry in feed.entries:
 
               title_original = entry.get("title", "").strip()
 
-              # Solo Servicio Canario de la Salud
               if not title_original.startswith(
                   "Servicio Canario de la Salud.-"
               ):
@@ -81,11 +120,14 @@ jobs:
               entry_id = entry.get("id", "").strip()
 
               if not entry_id:
+                  print("Entrada SCS sin ID. Se ignora.")
                   continue
 
-              # ------------------------------------------------
-              # Título limpio
-              # ------------------------------------------------
+              ya_existia = entry_id in existentes
+
+              # --------------------------------------------------
+              # TÍTULO
+              # --------------------------------------------------
 
               title = re.sub(
                   r"^Servicio Canario de la Salud\.-\s*",
@@ -93,25 +135,34 @@ jobs:
                   title_original
               )
 
-              # ------------------------------------------------
-              # Fecha de publicación
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # FECHA
+              # --------------------------------------------------
 
-              published = entry.get("published", "")
+              published = entry.get("published", "").strip()
+
+              date = ""
 
               if published:
-                  dt = datetime.strptime(
-                      published,
-                      "%a, %d %b %Y %H:%M:%S %z"
-                  )
 
-                  date = dt.strftime("%Y-%m-%d")
-              else:
-                  date = ""
+                  try:
 
-              # ------------------------------------------------
-              # Obtener CVE
-              # ------------------------------------------------
+                      dt = datetime.strptime(
+                          published,
+                          "%a, %d %b %Y %H:%M:%S %z"
+                      )
+
+                      date = dt.strftime("%Y-%m-%d")
+
+                  except Exception as e:
+
+                      print(
+                          f"ERROR procesando fecha: {e}"
+                      )
+
+              # --------------------------------------------------
+              # RESUMEN / CVE
+              # --------------------------------------------------
 
               summary_html = entry.get("summary", "")
 
@@ -132,9 +183,9 @@ jobs:
 
               cve = match.group(1) if match else ""
 
-              # ------------------------------------------------
-              # Crear noticia
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # CREAR / ACTUALIZAR NOTICIA
+              # --------------------------------------------------
 
               noticia = {
                   "id": entry_id,
@@ -146,18 +197,150 @@ jobs:
                   "cve": cve
               }
 
-              # ------------------------------------------------
-              # Añadir o actualizar
-              # ------------------------------------------------
+              if not ya_existia:
 
-              if entry_id not in existentes:
+                  noticia["telegram_notified"] = False
+
                   existentes[entry_id] = noticia
+
                   nuevas += 1
+
+                  print()
+                  print("NUEVA NOTICIA:")
+                  print(title)
+
               else:
+
                   existentes[entry_id].update(noticia)
 
+                  if "telegram_notified" not in existentes[entry_id]:
+                      existentes[entry_id]["telegram_notified"] = True
+
           # --------------------------------------------------
-          # Ordenar de más reciente a más antigua
+          # FUNCIÓN TELEGRAM
+          # --------------------------------------------------
+
+          def enviar_telegram(noticia):
+
+              titulo = html.escape(
+                  noticia.get("title", "")
+              )
+
+              fecha = html.escape(
+                  noticia.get("date", "")
+              )
+
+              cve = html.escape(
+                  noticia.get("cve", "")
+              )
+
+              url = noticia.get("url", "")
+
+              mensaje = (
+                  "<b>📰 Nueva publicación del BOC</b>\n\n"
+                  f"<b>{titulo}</b>\n\n"
+                  f"📅 {fecha}\n"
+              )
+
+              if cve:
+                  mensaje += f"🔎 CVE: {cve}\n"
+
+              mensaje += (
+                  f"\n🔗 <a href=\"{html.escape(url, quote=True)}\">"
+                  "Ver publicación en el BOC"
+                  "</a>"
+              )
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot"
+                  f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+              )
+
+              data = urlencode({
+                  "chat_id": TELEGRAM_CHAT_ID,
+                  "message_thread_id": TELEGRAM_THREAD_ID,
+                  "text": mensaje,
+                  "parse_mode": "HTML",
+                  "disable_web_page_preview": "false"
+              }).encode("utf-8")
+
+              request = Request(
+                  telegram_url,
+                  data=data,
+                  method="POST"
+              )
+
+              try:
+
+                  with urlopen(
+                      request,
+                      timeout=30
+                  ) as response:
+
+                      respuesta = json.loads(
+                          response.read().decode("utf-8")
+                      )
+
+                  if respuesta.get("ok"):
+                      return True
+
+                  print(
+                      "Telegram respondió con error:"
+                  )
+                  print(respuesta)
+
+                  return False
+
+              except Exception as e:
+
+                  print(
+                      f"Error enviando a Telegram: {e}"
+                  )
+
+                  return False
+
+          # --------------------------------------------------
+          # ENVIAR NUEVAS NOTICIAS
+          # --------------------------------------------------
+
+          print()
+          print("=" * 80)
+          print("TELEGRAM")
+          print("=" * 80)
+
+          for entry_id, noticia in existentes.items():
+
+              if noticia.get("telegram_notified") is not False:
+                  continue
+
+              print()
+              print(
+                  f"Enviando a Telegram: "
+                  f"{noticia['title']}"
+              )
+
+              enviado = enviar_telegram(noticia)
+
+              if enviado:
+
+                  noticia["telegram_notified"] = True
+
+                  telegram_enviadas += 1
+
+                  print(
+                      "✓ Telegram enviado correctamente"
+                  )
+
+              else:
+
+                  telegram_errores += 1
+
+                  print(
+                      "✗ No se pudo enviar a Telegram"
+                  )
+
+          # --------------------------------------------------
+          # ORDENAR NOTICIAS
           # --------------------------------------------------
 
           noticias = list(existentes.values())
@@ -171,10 +354,15 @@ jobs:
           )
 
           # --------------------------------------------------
-          # Guardar JSON
+          # GUARDAR JSON
           # --------------------------------------------------
 
-          with open(OUTPUT, "w", encoding="utf-8") as f:
+          with open(
+              OUTPUT,
+              "w",
+              encoding="utf-8"
+          ) as f:
+
               json.dump(
                   noticias,
                   f,
@@ -183,21 +371,58 @@ jobs:
               )
 
           # --------------------------------------------------
-          # Mostrar información en el log
+          # RESUMEN
           # --------------------------------------------------
 
-          print(f"Entradas RSS: {len(feed.entries)}")
-          print(f"Noticias SCS encontradas: {noticias_scs}")
-          print(f"Nuevas noticias: {nuevas}")
-          print(f"Total histórico: {len(noticias)}")
+          print()
+          print("=" * 80)
+          print("RESUMEN")
           print("=" * 80)
 
+          print(
+              f"Entradas RSS: {len(feed.entries)}"
+          )
+
+          print(
+              f"Noticias SCS encontradas: {noticias_scs}"
+          )
+
+          print(
+              f"Nuevas noticias: {nuevas}"
+          )
+
+          print(
+              f"Noticias enviadas a Telegram: "
+              f"{telegram_enviadas}"
+          )
+
+          print(
+              f"Errores Telegram: "
+              f"{telegram_errores}"
+          )
+
+          print(
+              f"Total histórico: {len(noticias)}"
+          )
+
+          print()
+          print("Últimas noticias:")
+
           for noticia in noticias[:10]:
+
               print(
-                  f"{noticia['date']} | "
-                  f"{noticia['cve']} | "
-                  f"{noticia['title']}"
+                  f"{noticia.get('date', '')} | "
+                  f"{noticia.get('cve', '')} | "
+                  f"{noticia.get('title', '')}"
               )
+
+          print("=" * 80)
+
+          if telegram_errores > 0:
+              raise SystemExit(
+                  "Se produjeron errores enviando noticias a Telegram."
+              )
+
           PY
 
       - name: Guardar cambios

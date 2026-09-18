@@ -1,0 +1,133 @@
+name: Actualizar noticias BOC SCS
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Instalar dependencias
+        run: |
+          pip install feedparser beautifulsoup4
+
+      - name: Procesar RSS
+        run: |
+          python - <<'PY'
+          import feedparser
+          import json
+          import re
+          from bs4 import BeautifulSoup
+          from datetime import datetime
+
+          RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
+          OUTPUT = "noticias.json"
+
+          feed = feedparser.parse(RSS_URL)
+
+          noticias = []
+
+          for entry in feed.entries:
+
+              title = entry.get("title", "").strip()
+
+              # Solo Servicio Canario de la Salud
+              if not title.startswith("Servicio Canario de la Salud.-"):
+                  continue
+
+              # Limpiamos el título
+              title = re.sub(
+                  r"^Servicio Canario de la Salud\.-\s*",
+                  "",
+                  title
+              )
+
+              # Fecha
+              published = entry.get("published_parsed")
+
+              if published:
+                  date = datetime(
+                      published.tm_year,
+                      published.tm_mon,
+                      published.tm_mday
+                  ).strftime("%Y-%m-%d")
+              else:
+                  date = ""
+
+              # Resumen del BOC
+              summary_html = entry.get("summary", "")
+              soup = BeautifulSoup(summary_html, "html.parser")
+
+              # Intentamos obtener el CVE
+              cve = ""
+              text = soup.get_text(" ", strip=True)
+
+              match = re.search(
+                  r"CVE:\s*(BOC-[A-Z]-\d{4}-\d+-\d+)",
+                  text
+              )
+
+              if match:
+                  cve = match.group(1)
+
+              noticia = {
+                  "id": entry.get("id", ""),
+                  "title": title,
+                  "url": entry.get("link", ""),
+                  "date": date,
+                  "source": "BOC",
+                  "organismo": "Servicio Canario de la Salud",
+                  "cve": cve
+              }
+
+              noticias.append(noticia)
+
+          # Ordenar de más reciente a más antigua
+          noticias.sort(
+              key=lambda x: x["date"],
+              reverse=True
+          )
+
+          with open(OUTPUT, "w", encoding="utf-8") as f:
+              json.dump(
+                  noticias,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          print(f"Entradas RSS: {len(feed.entries)}")
+          print(f"Entradas SCS: {len(noticias)}")
+          print("=" * 80)
+
+          for noticia in noticias:
+              print(f"{noticia['date']} | {noticia['cve']} | {noticia['title']}")
+          PY
+
+      - name: Guardar cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add noticias.json
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios."
+          else
+            git commit -m "Actualizar noticias BOC SCS"
+            git push
+          fi

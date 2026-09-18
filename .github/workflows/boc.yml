@@ -32,14 +32,13 @@ jobs:
           import json
           import re
           from bs4 import BeautifulSoup
-          from datetime import datetime, timezone
-          from zoneinfo import ZoneInfo
+          from datetime import datetime
 
           RSS_URL = "https://www.gobiernodecanarias.org/boc/feeds/capitulo/autoridades_personal_oposiciones.rss"
           OUTPUT = "noticias.json"
 
           # --------------------------------------------------
-          # Cargar noticias existentes
+          # CARGAR NOTICIAS EXISTENTES
           # --------------------------------------------------
 
           try:
@@ -55,35 +54,43 @@ jobs:
           }
 
           # --------------------------------------------------
-          # Descargar RSS
+          # LEER RSS
           # --------------------------------------------------
 
+          print("Leyendo RSS del BOC...")
           feed = feedparser.parse(RSS_URL)
 
+          print(f"Entradas RSS encontradas: {len(feed.entries)}")
+          print("=" * 80)
+
           nuevas = 0
+          noticias_scs = 0
 
           # --------------------------------------------------
-          # Procesar entradas
+          # PROCESAR ENTRADAS
           # --------------------------------------------------
 
           for entry in feed.entries:
 
               title_original = entry.get("title", "").strip()
 
-              # Solo Servicio Canario de la Salud
+              # Solo noticias del Servicio Canario de la Salud
               if not title_original.startswith(
                   "Servicio Canario de la Salud.-"
               ):
                   continue
 
+              noticias_scs += 1
+
               entry_id = entry.get("id", "").strip()
 
               if not entry_id:
+                  print("Entrada SCS sin ID. Se ignora.")
                   continue
 
-              # ------------------------------------------------
-              # Título limpio
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # TÍTULO
+              # --------------------------------------------------
 
               title = re.sub(
                   r"^Servicio Canario de la Salud\.-\s*",
@@ -91,34 +98,49 @@ jobs:
                   title_original
               )
 
-              # ------------------------------------------------
-              # Fecha Canarias
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # FECHA
+              # --------------------------------------------------
 
-              published = entry.get("published_parsed")
+              published = entry.get("published", "").strip()
+
+              print(f"ID: {entry_id}")
+              print(f"published RSS: {repr(published)}")
+              print(
+                  f"published_parsed: "
+                  f"{entry.get('published_parsed')}"
+              )
+
+              date = ""
 
               if published:
-                  dt = datetime(
-                      published.tm_year,
-                      published.tm_mon,
-                      published.tm_mday,
-                      published.tm_hour,
-                      published.tm_min,
-                      published.tm_sec,
-                      tzinfo=timezone.utc
-                  )
 
-                  dt_canarias = dt.astimezone(
-                      ZoneInfo("Atlantic/Canary")
-                  )
+                  try:
+                      # El RSS proporciona la fecha con su zona horaria.
+                      # Ejemplo:
+                      # Wed, 16 Sep 2026 00:00:00 +0200
+                      #
+                      # NO hacemos ninguna conversión horaria.
+                      # Queremos conservar la fecha publicada por el BOC.
 
-                  date = dt_canarias.strftime("%Y-%m-%d")
-              else:
-                  date = ""
+                      dt = datetime.strptime(
+                          published,
+                          "%a, %d %b %Y %H:%M:%S %z"
+                      )
 
-              # ------------------------------------------------
-              # CVE
-              # ------------------------------------------------
+                      date = dt.strftime("%Y-%m-%d")
+
+                      print(f"Fecha calculada: {date}")
+
+                  except Exception as e:
+
+                      print(
+                          f"ERROR procesando fecha: {e}"
+                      )
+
+              # --------------------------------------------------
+              # RESUMEN / CVE
+              # --------------------------------------------------
 
               summary_html = entry.get("summary", "")
 
@@ -139,9 +161,9 @@ jobs:
 
               cve = match.group(1) if match else ""
 
-              # ------------------------------------------------
-              # Noticia
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # CREAR NOTICIA
+              # --------------------------------------------------
 
               noticia = {
                   "id": entry_id,
@@ -153,20 +175,27 @@ jobs:
                   "cve": cve
               }
 
-              # ------------------------------------------------
-              # Añadir / actualizar
-              # ------------------------------------------------
+              # --------------------------------------------------
+              # GUARDAR / ACTUALIZAR
+              # --------------------------------------------------
 
               if entry_id not in existentes:
+
                   existentes[entry_id] = noticia
                   nuevas += 1
+
+                  print("→ NUEVA NOTICIA")
+
               else:
-                  # Actualizamos los datos por si el BOC
-                  # hubiera modificado algún campo.
+
                   existentes[entry_id].update(noticia)
 
+                  print("→ NOTICIA ACTUALIZADA")
+
+              print("-" * 80)
+
           # --------------------------------------------------
-          # Ordenar
+          # ORDENAR NOTICIAS
           # --------------------------------------------------
 
           noticias = list(existentes.values())
@@ -180,10 +209,15 @@ jobs:
           )
 
           # --------------------------------------------------
-          # Guardar
+          # GUARDAR JSON
           # --------------------------------------------------
 
-          with open(OUTPUT, "w", encoding="utf-8") as f:
+          with open(
+              OUTPUT,
+              "w",
+              encoding="utf-8"
+          ) as f:
+
               json.dump(
                   noticias,
                   f,
@@ -192,21 +226,43 @@ jobs:
               )
 
           # --------------------------------------------------
-          # Información del proceso
+          # RESUMEN FINAL
           # --------------------------------------------------
 
-          print(f"Entradas RSS: {len(feed.entries)}")
-          print(f"Noticias SCS encontradas: {sum(1 for e in feed.entries if e.get('title', '').startswith('Servicio Canario de la Salud.-'))}")
-          print(f"Nuevas noticias: {nuevas}")
-          print(f"Total histórico: {len(noticias)}")
+          print()
+          print("=" * 80)
+          print("RESUMEN")
           print("=" * 80)
 
+          print(
+              f"Entradas RSS: {len(feed.entries)}"
+          )
+
+          print(
+              f"Noticias SCS encontradas: {noticias_scs}"
+          )
+
+          print(
+              f"Nuevas noticias: {nuevas}"
+          )
+
+          print(
+              f"Total histórico: {len(noticias)}"
+          )
+
+          print()
+          print("Últimas noticias:")
+
           for noticia in noticias[:10]:
+
               print(
-                  f"{noticia['date']} | "
-                  f"{noticia['cve']} | "
-                  f"{noticia['title']}"
+                  f"{noticia.get('date', '')} | "
+                  f"{noticia.get('cve', '')} | "
+                  f"{noticia.get('title', '')}"
               )
+
+          print("=" * 80)
+
           PY
 
       - name: Guardar cambios
